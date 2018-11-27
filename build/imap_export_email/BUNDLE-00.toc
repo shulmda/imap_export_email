@@ -1,0 +1,3 @@
+([('imap_export_email',
+   '/Users/shulmda/Desktop/David/imap_export_email/dist/imap_export_email',
+   'EXECUTABLE')],)
