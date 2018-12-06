@@ -31,25 +31,20 @@ import threading
 # ToDo: Make the number of threads user configurable?
 # ToDo: Tests
 
-valid_filename_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
+valid_filename_chars = "-+_.!@#$%%^&*(){}[]\"'<>,?; %s%s" % (string.ascii_letters, string.digits)
 threadcount = 5
-invalidchars = {}
 
 def check_char(c):
     """
         Function to check if a character is in the list of charecters allowed in filenames
     """
     # ToDo: Could be more efficient, it is looping through all valid chars each time.
-    # ToDo: increase the valid characters.
+    # ToDo: increase the list of valid characters.
 
     try:
         if c in valid_filename_chars:
             return c
         else:
-            if c not in invalidchars:
-                invalidchars[c] = 1
-            else:
-                invalidchars[c] = invalidchars[c] + 1
             return ' '
     except:
         return ' '
@@ -220,7 +215,7 @@ class OptionMenu(tk.OptionMenu):
             command=tk._setit(self.variable, label, self._command))
 
 class ExportEmailThread(threading.Thread):
-    def __init__(self, queue,stop_queue,email_account,password,imap_server,output_directory, email_folder,message_begin_num,message_end_num):
+    def __init__(self, queue,stop_queue,email_account,password,imap_server,output_directory, email_folder,message_begin_num,message_end_num,thread_id):
 
         threading.Thread.__init__(self)
         self.queue = queue
@@ -233,15 +228,16 @@ class ExportEmailThread(threading.Thread):
         self.message_begin_num = message_begin_num
         self.message_end_num = message_end_num
         self.batch_size= 100
+        self.thread_id = thread_id
     def run(self):
         self.export_folder()
-        self.queue.put("done")
+        self.queue.put("done:%s" % self.thread_id)
 
 
 
     def export_folder(self):
-        print "email_account: %s" % self.email_account
-        print "email_folder: %s " % self.email_folder
+        #print "email_account: %s" % self.email_account
+        #print "email_folder: %s " % self.email_folder
 
         current_message_number = self.message_begin_num
 
@@ -317,7 +313,7 @@ class GUI:
         self.master.geometry("500x400")
 
 
-        self.server = tk.StringVar(self.master, value='imap.gmail.com')
+        self.server = tk.StringVar(self.master, value='')
         self.labelserver = Label(self.master, text="Server:")
         self.labelserver.place(x=20, y=20)
         self.labelserverhelp = Label(self.master, text="(ie. imap.myserver.com)")
@@ -326,7 +322,7 @@ class GUI:
         self.entryserver = Entry(self.master, textvariable=self.server)
         self.entryserver.place(x=150, y=18)
 
-        self.user_name = tk.StringVar(self.master, value='shulmda@gmail.com')
+        self.user_name = tk.StringVar(self.master, value='')
         self.labelusername = Label(self.master, text="User Name:")
         self.labelusername.place(x=20, y=50)
         self.entryusername = Entry(self.master, textvariable=self.user_name)
@@ -381,15 +377,22 @@ class GUI:
 
         self.stop_button = Button(self.master, text="Stop Export",state=DISABLED, command=self.tb_stop)
         self.stop_button.place(x=150, y=325)
-        self.child_thread_array = []
+        self.child_thread_queue_array = []
+        self.child_thread_id_dict = {}
         self.message_count = 0
         self.processed_count = 0
 
 
     def tb_start(self):
+
         # ToDo: Wastes a bit of memory on restart by resetting the array instead of removing them all
 
-        self.child_thread_array = []
+        self.child_thread_queue_array = []
+        self.processed_count = 0
+        self.message_count = 0
+
+        self.labelcomplete['text'] = "0%% Total: %s" % (self.message_count)
+
 
         # ToDo: add code to add better error trapping
         if (self.destination.get() == ""):
@@ -413,6 +416,7 @@ class GUI:
                                                  self.selectedfolder.get())
         self.message_count = message_count
 
+        self.labelcomplete['text'] = "0%% Total: %s" % (self.message_count)
 
 
 
@@ -432,29 +436,31 @@ class GUI:
             print "Messages per thread %s" % (thread_portion)
 
             # Loop through the threads and run one thread per segment
-            for i in range(0, threadcount_local):
-                print "Thread id: %s" % (i)
+            for thread_id in range(0, threadcount_local):
+                print "Thread id: %s" % (thread_id)
 
                 # Add the remainder to the first thread end_num
                 start_num = end_num + 1
                 end_num = end_num + thread_portion
 
-                if i == 0:
+                if thread_id == 0:
                     remainder = message_count - (thread_portion * threadcount_local)
                     end_num = end_num + remainder
 
                 # create queue for messages from the main thread to each child thread (Stop/Pause message)
                 child_thread_queue = Queue.Queue()
-                self.child_thread_array.append(child_thread_queue)
+                self.child_thread_queue_array.append(child_thread_queue)
+                self.child_thread_id_dict[thread_id] = 'running'
+
                 print "Starting Thread with range: %s to %s" % (start_num,end_num)
-                if message_count > 0:
-                    ExportEmailThread(self.main_thread_queue, child_thread_queue, self.user_name.get(), self.password.get(), self.server.get(), self.destination.get(), self.selectedfolder.get(), start_num, end_num).start()
-                    self.master.after(100, self.process_mainthread_queue)
+                ExportEmailThread(self.main_thread_queue, child_thread_queue, self.user_name.get(), self.password.get(), self.server.get(), self.destination.get(), self.selectedfolder.get(), start_num, end_num,thread_id ).start()
+                self.master.after(100, self.process_mainthread_queue)
 
     def tb_stop(self):
         self.stop_button.configure(state=DISABLED)
-        for queue in self.child_thread_array:
+        for queue in self.child_thread_queue_array:
             queue.put("stop")
+
 
 
     def process_mainthread_queue(self):
@@ -484,9 +490,19 @@ class GUI:
                 self.master.after(100, self.process_mainthread_queue)
 
             # ToDo: It reenables the Start Button before all threads are completed.  It should wait.
-            if (msg == "done"):
-                self.start_button.configure(state=NORMAL)
-                self.stop_button.configure(state=DISABLED)
+            if ("done:" in msg):
+                thread_id = int(msg[5:])
+                self.child_thread_id_dict[thread_id] = ''
+
+                # Check if all the Threads are finished
+                all_done = True
+                for thread_id in self.child_thread_id_dict:
+                    if not self.child_thread_id_dict[thread_id] == '':
+                        all_done = False
+
+                if all_done == True:
+                    self.start_button.configure(state=NORMAL)
+                    self.stop_button.configure(state=DISABLED)
 
         except Queue.Empty:
             # If Queue us Empty then call itself after waiting 100ms
