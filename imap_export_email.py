@@ -483,6 +483,7 @@ class GUI:
                 self.labelcomplete['text'] = "%s%% Total: %s" % (round(float(self.processed_count) / float(self.message_count) * 100, 1), self.message_count)
                 self.master.after(100, self.process_mainthread_queue)
 
+            # ToDo: It reenables the Start Button before all threads are completed.  It should wait.
             if (msg == "done"):
                 self.start_button.configure(state=NORMAL)
                 self.stop_button.configure(state=DISABLED)
