@@ -12,6 +12,7 @@ import email.header
 import time
 import os
 from dateutil.parser import parse
+import datetime
 import Queue
 import Tkinter as tk
 from tkinter import filedialog
@@ -22,26 +23,33 @@ import string
 import threading
 
 # ToDo: The imap functions could be their own class and it should be possible to maintain the login without reconnect
-# ToDo: If the connnection is closed, it should trap the error and auto-reconnect
 # ToDo: Remove the print statements for Debugging
 # ToDo: Command line interface?  Quiet Mode? Needed?
 # ToDo: Remove Commented out print statments
 # ToDo: Remove print statments or make a command line flag for when
 # ToDo: Research: Do we really need to extend the OptionMenu? Why isn't there a method for this?
-# ToDo: multi-thread the export into concurrent processes
+# ToDo: Make the number of threads user configurable?
+# ToDo: Tests
 
 valid_filename_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
+threadcount = 5
+invalidchars = {}
 
 def check_char(c):
     """
         Function to check if a character is in the list of charecters allowed in filenames
     """
     # ToDo: Could be more efficient, it is looping through all valid chars each time.
+    # ToDo: increase the valid characters.
 
     try:
         if c in valid_filename_chars:
             return c
         else:
+            if c not in invalidchars:
+                invalidchars[c] = 1
+            else:
+                invalidchars[c] = invalidchars[c] + 1
             return ' '
     except:
         return ' '
@@ -94,6 +102,30 @@ def list_folders(user_name,password,server):
     except:
         return []
 
+def get_folder_message_count(user_name,password,server,folder):
+    """
+        Function to count the number of messages in a folder
+    """
+
+    M = imaplib.IMAP4_SSL(server)
+    M.login(user_name, password)
+    rv, data = M.select(folder)
+    if rv == 'OK':
+        rv, data = M.search(None, "ALL")
+        M.close()
+        M.logout()
+        if rv != 'OK':
+            print "No messages found!"
+            return 0
+
+        messagelist = data[0].split()
+        print "Message Count: %s " % (len(messagelist))
+        return len(messagelist)
+    else:
+        print "ERROR: Unable to open mailbox ", rv
+        M.close()
+        M.logout()
+        return 0
 
 def export_message(M,num,output_directory):
 
@@ -114,11 +146,12 @@ def export_message(M,num,output_directory):
         subject = subject[:200]
     timestamp_decode = email.header.decode_header(msg['Date'])[0]
     timestamp = unicode(timestamp_decode[0])
+
     # print "timestamp: %s" %(timestamp)
     try:
         message_time = parse(timestamp)
     except:
-        message_time = parse("Thu Nov 22 00:00:00 +0200")
+        message_time = datetime.datetime
 
     if rv != 'OK':
         print "ERROR getting message", num
@@ -133,81 +166,44 @@ def export_message(M,num,output_directory):
     f.write(message[0][1])
     f.close()
     # YYYYMMDDhhmm
-    file_time = "%04d%02d%02d%02d%02d" % (
-    message_time.year, message_time.month, message_time.day, message_time.hour, message_time.minute)
+    # ToDo: Fix issues where time is failing to be set.
+    try:
+        file_time = "%04d%02d%02d%02d%02d" % (
+            message_time.year, message_time.month, message_time.day, message_time.hour, message_time.minute)
 
-    str_command = "touch -t %s \"%s\"" % (file_time, filename)
-    # print "str_command: %s " % (str_command)
-    os.system(str_command)
-    #stinfo = os.stat(filename)
-    # print stinfo
+        # Timestamp the file to match the creation date of the email (making it easier to search)
+        str_command = "touch -t %s \"%s\"" % (file_time, filename)
+        os.system(str_command)
+
+    except:
+        print "Warning: Failed to set file time for email #:", num
 
 
 
-def export_mailbox(M, output_directory, skip, queue, stop_queue):
+
+
+def export_mailbox(M, output_directory, message_begin_num,message_end_num):
     """
         export all emails in the folder to files in output directory with names matching the subject.
     """
-
-    # ToDo: MessageBox should be handled in the GUI Thread, not here.
-
-    rv, data = M.search(None, "ALL")
-    if rv != 'OK':
-        print "No messages found!"
-        return
-
-    messagelist = data[0].split()
-    print "Message Count: %s " %(len(messagelist))
     count = 0
-    interval = len(messagelist) / 100
-    if interval == 0:
-        interval = 1
-    #print "interval: %s" % interval
-    skip_count = int(skip)
-    print "skip_count: %s" % skip_count
-    #skip_count= 0
-
     # Loop through message list
-    for num in messagelist:
-        #print "count: %s" % count
+    for num in range(message_begin_num,message_end_num + 1):
 
-        if count < skip_count:
-            count = count + 1
-            if (count % interval == 0):
-                print "Skipped %s%% (%s of %s)" % (
-                (round(float(count) / float(len(messagelist)) * 100, 1)), count, len(messagelist))
-                queue.put("step:%s,%s" % (count, len(messagelist)))
-            continue
-        else:
-            try:
-                #print "Export: %s" % num
-                export_message(M, num, output_directory)
-
-            except:
-                queue.put("step:%s,%s" % (count -1, len(messagelist)))
-                time.sleep(1)
-                queue.put("done")
-                messagebox.showinfo("Export Error", "Export Error. Press 'Start Export' to restart the process from where it left off.")
-                return
-            count = count + 1
-
-        if (count % interval == 0 ):
-            print "Exported %s%% (%s of %s)" % ((round(float(count)/float(len(messagelist) ) * 100,1)), count,len(messagelist) )
-            queue.put("step:%s,%s" % (count, len(messagelist)))
-
-        # Check if a stop command has been issued
         try:
-            msg = stop_queue.get(0)
-            if (msg == "stop"):
-                queue.put("step:%s,%s" % (count, len(messagelist)))
-                time.sleep(1)
-                queue.put("done")
-                return
-        except Queue.Empty:
-            continue
+            #print "Export Message:", num
+            export_message(M, num, output_directory)
 
-    queue.put("step:%s,%s" % (count, len(messagelist)))
-    print "Exported Emails: %s" % (count)
+        except Exception, e:
+            print ('Failed to export message: ' + str(e))
+            return -1
+
+        count = count + 1
+
+
+
+    return count
+
 
 
 class OptionMenu(tk.OptionMenu):
@@ -224,7 +220,7 @@ class OptionMenu(tk.OptionMenu):
             command=tk._setit(self.variable, label, self._command))
 
 class ExportEmailThread(threading.Thread):
-    def __init__(self, queue,stop_queue,email_account,password,imap_server,output_directory, email_folder,skipcount):
+    def __init__(self, queue,stop_queue,email_account,password,imap_server,output_directory, email_folder,message_begin_num,message_end_num):
 
         threading.Thread.__init__(self)
         self.queue = queue
@@ -234,8 +230,9 @@ class ExportEmailThread(threading.Thread):
         self.imap_server = imap_server
         self.output_directory = output_directory
         self.email_folder = email_folder
-        self.skipcount = skipcount
-
+        self.message_begin_num = message_begin_num
+        self.message_end_num = message_end_num
+        self.batch_size= 100
     def run(self):
         self.export_folder()
         self.queue.put("done")
@@ -245,17 +242,67 @@ class ExportEmailThread(threading.Thread):
     def export_folder(self):
         print "email_account: %s" % self.email_account
         print "email_folder: %s " % self.email_folder
-        M = imaplib.IMAP4_SSL(self.imap_server)
-        M.login(self.email_account, self.password)
-        rv, data = M.select(self.email_folder)
-        if rv == 'OK':
-            print "Processing mailbox: ", self.email_folder
-            export_mailbox(M, self.output_directory, self.skipcount, self.queue, self.stop_queue)
-            M.close()
-        else:
-            print "ERROR: Unable to open mailbox ", rv
-        M.logout()
 
+        current_message_number = self.message_begin_num
+
+        end_message_number = 0
+
+        retry_count = 0
+        # Use the Batches to allow for fault tolerance
+        while current_message_number < self.message_end_num:
+
+            end_message_number = current_message_number + self.batch_size
+            if (end_message_number > self.message_end_num):
+                end_message_number = self.message_end_num
+
+            if retry_count == 3:
+                return -1
+
+            # If a batch fails, restart the batch including login
+            export_status = 0
+            M = imaplib.IMAP4_SSL(self.imap_server)
+            M.login(self.email_account, self.password)
+            rv, data = M.select(self.email_folder)
+            if rv == 'OK':
+                #print "Processing mailbox: ", self.email_folder
+                export_status = export_mailbox(M, self.output_directory, current_message_number,end_message_number)
+                if export_status < 0:
+                    # Increase Retry Count
+                    retry_count = retry_count + 1
+
+                    # ToDo: Make the retry delay a random interval
+                    time.sleep(1)
+                    continue
+                else:
+
+                    # Reset Retry count on successful export
+                    retry_count = 0
+
+
+                    # Transmit the number of emails export via the queue to main thread
+                    self.queue.put("step:%s" % (export_status))
+
+                    if current_message_number <= self.message_end_num:
+                        current_message_number = end_message_number + 1
+
+                # Check if a stop command has been issued (Note, it will only check on batch completion
+                # ToDo: find an elegent way to stop without waiting for a batch to finish.
+                try:
+                    msg = self.stop_queue.get(0)
+                    if (msg == "stop"):
+                        M.close()
+                        M.logout()
+                        return
+                except Queue.Empty:
+                    continue
+
+
+            else:
+                print "ERROR: Unable to open mailbox ", rv
+
+            M.close()
+            M.logout()
+        return
 
 
 
@@ -270,7 +317,7 @@ class GUI:
         self.master.geometry("500x400")
 
 
-        self.server = tk.StringVar(self.master, value='')
+        self.server = tk.StringVar(self.master, value='imap.gmail.com')
         self.labelserver = Label(self.master, text="Server:")
         self.labelserver.place(x=20, y=20)
         self.labelserverhelp = Label(self.master, text="(ie. imap.myserver.com)")
@@ -279,7 +326,7 @@ class GUI:
         self.entryserver = Entry(self.master, textvariable=self.server)
         self.entryserver.place(x=150, y=18)
 
-        self.user_name = tk.StringVar(self.master, value='')
+        self.user_name = tk.StringVar(self.master, value='shulmda@gmail.com')
         self.labelusername = Label(self.master, text="User Name:")
         self.labelusername.place(x=20, y=50)
         self.entryusername = Entry(self.master, textvariable=self.user_name)
@@ -312,14 +359,6 @@ class GUI:
 
         self.prog_bar.place(x=150, y=230)
 
-        self.skip = tk.StringVar(self.master, value='0')
-        self.labelmessageindex = Label(self.master, text="Message Index:")
-        self.labelmessageindex.place(x=20, y=260)
-        self.labelserverhelp = Label(self.master, text="(ie. message # offset)")
-        self.labelserverhelp.place(x=340, y=260)
-
-        self.entryskip = Entry(self.master, textvariable=self.skip)
-        self.entryskip.place(x=150, y=258)
 
 
         self.labelpctcomplete = Label(self.master, text="Percent Complete:")
@@ -342,9 +381,15 @@ class GUI:
 
         self.stop_button = Button(self.master, text="Stop Export",state=DISABLED, command=self.tb_stop)
         self.stop_button.place(x=150, y=325)
+        self.child_thread_array = []
+        self.message_count = 0
+        self.processed_count = 0
 
 
     def tb_start(self):
+        # ToDo: Wastes a bit of memory on restart by resetting the array instead of removing them all
+
+        self.child_thread_array = []
 
         # ToDo: add code to add better error trapping
         if (self.destination.get() == ""):
@@ -355,21 +400,62 @@ class GUI:
             messagebox.showinfo("Export Error", "A Mail Folder must be selected")
             return
 
+        # Disable/Enable the buttons
         self.start_button.configure(state=DISABLED)
         self.stop_button.configure(state=NORMAL)
 
-        # create 2 queues.
-        # 1 for messages from the child thread to the main thread (Progress Updates, Finished...)
-        # 1 for messages from the main thread to the child thread (Stop/Pause message)
-        self.main_thread_queue = Queue.Queue()
-        self.child_thread_queue = Queue.Queue()
+        self.prog_bar.step(-100)
 
-        ExportEmailThread(self.main_thread_queue, self.child_thread_queue, self.user_name.get(), self.password.get(), self.server.get(), self.destination.get(), self.selectedfolder.get(), self.skip.get()).start()
-        self.master.after(100, self.process_mainthread_queue)
+        # create queue for messages from the child thread to the main thread (Progress Updates, Finished...)
+        self.main_thread_queue = Queue.Queue()
+
+        message_count = get_folder_message_count(self.user_name.get(), self.password.get(), self.server.get(),
+                                                 self.selectedfolder.get())
+        self.message_count = message_count
+
+
+
+
+        if message_count > 0:
+
+            start_num = 0
+            end_num = 0
+
+            threadcount_local = threadcount
+
+            # Handle Case where the number of messages is less than the threadcount
+            if (threadcount_local > message_count):
+                threadcount_local = message_count
+
+
+            thread_portion = int(round(float(message_count) / float(threadcount_local), 0))
+            print "Messages per thread %s" % (thread_portion)
+
+            # Loop through the threads and run one thread per segment
+            for i in range(0, threadcount_local):
+                print "Thread id: %s" % (i)
+
+                # Add the remainder to the first thread end_num
+                start_num = end_num + 1
+                end_num = end_num + thread_portion
+
+                if i == 0:
+                    remainder = message_count - (thread_portion * threadcount_local)
+                    end_num = end_num + remainder
+
+                # create queue for messages from the main thread to each child thread (Stop/Pause message)
+                child_thread_queue = Queue.Queue()
+                self.child_thread_array.append(child_thread_queue)
+                print "Starting Thread with range: %s to %s" % (start_num,end_num)
+                if message_count > 0:
+                    ExportEmailThread(self.main_thread_queue, child_thread_queue, self.user_name.get(), self.password.get(), self.server.get(), self.destination.get(), self.selectedfolder.get(), start_num, end_num).start()
+                    self.master.after(100, self.process_mainthread_queue)
 
     def tb_stop(self):
+        self.stop_button.configure(state=DISABLED)
+        for queue in self.child_thread_array:
+            queue.put("stop")
 
-        self.child_thread_queue.put("stop")
 
     def process_mainthread_queue(self):
         """
@@ -379,13 +465,22 @@ class GUI:
         try:
             msg = self.main_thread_queue.get(0)
 
-            # Process the messages from the child thread
+            # Process the messages from the child threads
             if ("step:" in msg):
                 stepstr = msg[5:]
-                stepamount,steptotal = stepstr.split(",")
-                self.skip.set(stepamount)
-                self.prog_bar.step(1)
-                self.labelcomplete['text'] = "%s%% Total: %s" % (round(float(stepamount) / float(steptotal) * 100, 1), steptotal)
+                stepamount = int(stepstr)
+                interval = float(self.message_count) / 100
+                already_processed = int(self.processed_count / interval)
+                newly_processed = int((self.processed_count +  stepamount) / interval)
+
+                # Step the progress bar only if the % has increased sufficiently
+                if already_processed  < newly_processed:
+                    self.prog_bar.step(newly_processed - already_processed  )
+
+                self.processed_count = self.processed_count + stepamount
+
+
+                self.labelcomplete['text'] = "%s%% Total: %s" % (round(float(self.processed_count) / float(self.message_count) * 100, 1), self.message_count)
                 self.master.after(100, self.process_mainthread_queue)
 
             if (msg == "done"):
