@@ -21,31 +21,22 @@ from tkinter import messagebox
 import string
 import threading
 
-# ToDo: The imap functions could be their own class and it should be possible to maintain the login without reconnected
+# ToDo: The imap functions could be their own class and it should be possible to maintain the login without reconnect
 # ToDo: If the connnection is closed, it should trap the error and auto-reconnect
 # ToDo: Remove the print statements for Debugging
-
+# ToDo: Command line interface?  Quiet Mode? Needed?
+# ToDo: Remove Commented out print statments
+# ToDo: Remove print statments or make a command line flag for when
+# ToDo: Research: Do we really need to extend the OptionMenu? Why isn't there a method for this?
+# ToDo: multi-thread the export into concurrent processes
 
 valid_filename_chars = "-_.() %s%s" % (string.ascii_letters, string.digits)
-
-class OptionMenu(tk.OptionMenu):
-    """
-        Extend the tkinter Options Menu to add the addOption method which doesn't seem to be present
-    """
-
-    def __init__(self, *args, **kw):
-        self._command = kw.get("command")
-        self.variable = args[1]
-        tk.OptionMenu.__init__(self, *args, **kw)
-    def addOption(self, label):
-        self["menu"].add_command(label=label,
-            command=tk._setit(self.variable, label, self._command))
-
 
 def check_char(c):
     """
         Function to check if a character is in the list of charecters allowed in filenames
     """
+    # ToDo: Could be more efficient, it is looping through all valid chars each time.
 
     try:
         if c in valid_filename_chars:
@@ -175,6 +166,8 @@ def export_mailbox(M, output_directory, skip, queue, stop_queue):
     skip_count = int(skip)
     print "skip_count: %s" % skip_count
     #skip_count= 0
+
+    # Loop through message list
     for num in messagelist:
         #print "count: %s" % count
 
@@ -216,8 +209,23 @@ def export_mailbox(M, output_directory, skip, queue, stop_queue):
     queue.put("step:%s,%s" % (count, len(messagelist)))
     print "Exported Emails: %s" % (count)
 
+
+class OptionMenu(tk.OptionMenu):
+    """
+        Extend the tkinter Options Menu to add the addOption method which doesn't seem to be present
+    """
+
+    def __init__(self, *args, **kw):
+        self._command = kw.get("command")
+        self.variable = args[1]
+        tk.OptionMenu.__init__(self, *args, **kw)
+    def addOption(self, label):
+        self["menu"].add_command(label=label,
+            command=tk._setit(self.variable, label, self._command))
+
 class ExportEmailThread(threading.Thread):
     def __init__(self, queue,stop_queue,email_account,password,imap_server,output_directory, email_folder,skipcount):
+
         threading.Thread.__init__(self)
         self.queue = queue
         self.stop_queue = stop_queue
@@ -385,6 +393,7 @@ class GUI:
                 self.stop_button.configure(state=DISABLED)
 
         except Queue.Empty:
+            # If Queue us Empty then call itself after waiting 100ms
             self.master.after(100, self.process_mainthread_queue)
 
     def update_folders_options(self):
