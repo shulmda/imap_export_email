@@ -403,9 +403,6 @@ class GUI:
             messagebox.showinfo("Export Error", "A Mail Folder must be selected")
             return
 
-        # Disable/Enable the buttons
-        self.start_button.configure(state=DISABLED)
-        self.stop_button.configure(state=NORMAL)
 
         self.prog_bar.step(-100)
 
@@ -421,6 +418,9 @@ class GUI:
 
 
         if message_count > 0:
+            # Disable/Enable the buttons
+            self.start_button.configure(state=DISABLED)
+            self.stop_button.configure(state=NORMAL)
 
             start_num = 0
             end_num = 0
